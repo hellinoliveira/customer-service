@@ -1,0 +1,8 @@
+.env
+data/
+kestra_storage/
+evolution_instances/
+evolution_store/
+node_modules/
+.DS_Store
+*.log

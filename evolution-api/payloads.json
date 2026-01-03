@@ -1,0 +1,176 @@
+{
+  "_documentation": {
+    "description": "Evolution API JSON Payloads for Pedalando Ali Customer Service",
+    "api_version": "v2",
+    "base_url": "https://your-evolution-api.com",
+    "instance": "pedalandoali"
+  },
+
+  "main_menu_list": {
+    "_endpoint": "POST /message/sendList/{instance}",
+    "_description": "Main menu with 2 options: Attendant and Promo Groups",
+    "payload": {
+      "number": "5562999999999",
+      "title": "Menu Principal",
+      "description": "Olá, {push_name}! 👋\n\nSeja muito bem-vindo(a) à Pedalando Ali! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você. Como posso te ajudar hoje?",
+      "buttonText": "Ver Opções",
+      "footerText": "Pedalando Ali - Seu caçador de ofertas",
+      "sections": [
+        {
+          "title": "Como posso ajudar?",
+          "rows": [
+            {
+              "rowId": "ATTENDANT",
+              "title": "💬 Falar com Atendente",
+              "description": "Tire dúvidas ou peça ajuda personalizada"
+            },
+            {
+              "rowId": "PROMO_GROUPS",
+              "title": "🔥 Grupos de Promoções",
+              "description": "Receba ofertas exclusivas no WhatsApp"
+            }
+          ]
+        }
+      ]
+    }
+  },
+
+  "niche_menu_list": {
+    "_endpoint": "POST /message/sendList/{instance}",
+    "_description": "Sub-menu with 5 niche options",
+    "payload": {
+      "number": "5562999999999",
+      "title": "Escolha seu Nicho",
+      "description": "Massa! 🎯\n\nTemos grupos exclusivos para cada estilo. Escolha o seu e receba as melhores ofertas direto no WhatsApp:",
+      "buttonText": "Ver Nichos",
+      "footerText": "Escolha quantos quiser!",
+      "sections": [
+        {
+          "title": "Grupos de Promoções",
+          "rows": [
+            {
+              "rowId": "NICHE_CYCLING",
+              "title": "🚴 Ciclismo",
+              "description": "Bikes, peças, acessórios e vestuário"
+            },
+            {
+              "rowId": "NICHE_HOME",
+              "title": "🏠 Casa",
+              "description": "Decoração, eletroportáteis e utilidades"
+            },
+            {
+              "rowId": "NICHE_FASHION",
+              "title": "👗 Moda e Beleza",
+              "description": "Roupas, calçados e cosméticos"
+            },
+            {
+              "rowId": "NICHE_AUTOMOTIVE",
+              "title": "🚗 Automotivo",
+              "description": "Acessórios, peças e ferramentas"
+            },
+            {
+              "rowId": "NICHE_RUNNING",
+              "title": "🏃 Corrida e Fitness",
+              "description": "Tênis, roupas e equipamentos"
+            }
+          ]
+        }
+      ]
+    }
+  },
+
+  "attendant_notification": {
+    "_endpoint": "POST /message/sendText/{instance}",
+    "_description": "Internal notification sent to attendant",
+    "payload": {
+      "number": "5562999999999",
+      "text": "🔔 *Nova Solicitação de Atendimento*\n\n👤 *Cliente:* {push_name}\n📱 *Telefone:* {sender_phone}\n⏰ *Horário:* {timestamp}\n\n_Responda diretamente ao cliente pelo número acima._"
+    }
+  },
+
+  "attendant_wait_reply": {
+    "_endpoint": "POST /message/sendText/{instance}",
+    "_description": "Reply to user after requesting attendant",
+    "payload": {
+      "number": "5562999999999",
+      "text": "Perfeito, {push_name}! 🙌\n\nJá avisei nosso time e em breve alguém vai te chamar por aqui mesmo.\n\nEnquanto isso, que tal dar uma olhada no nosso catálogo? Tem muita coisa boa! 👇\n\n🛒 *Catálogo:* https://pedalandoali.com.br/catalogo\n\nSe precisar de algo mais, é só mandar um \"oi\" que a gente recomeça! 😉"
+    }
+  },
+
+  "niche_responses": {
+    "_description": "Responses for each niche selection",
+    "cycling": {
+      "payload": {
+        "number": "5562999999999",
+        "text": "🚴 *Grupo de Ciclismo*\n\nExcelente escolha! Aqui você vai encontrar ofertas de bikes, peças, acessórios e tudo para pedalar.\n\n👉 *Entre no grupo:*\n{LINK_CYCLING}\n\n_Quer entrar em outro grupo também? Manda um \"oi\" que mostro as opções!_"
+      }
+    },
+    "home": {
+      "payload": {
+        "number": "5562999999999",
+        "text": "🏠 *Grupo de Casa*\n\nÓtima escolha! Aqui postamos ofertas de decoração, eletroportáteis, utilidades domésticas e muito mais.\n\n👉 *Entre no grupo:*\n{LINK_HOME}\n\n_Quer entrar em outro grupo também? Manda um \"oi\" que mostro as opções!_"
+      }
+    },
+    "fashion": {
+      "payload": {
+        "number": "5562999999999",
+        "text": "👗 *Grupo de Moda e Beleza*\n\nArrasou na escolha! Aqui você encontra ofertas de roupas, calçados, cosméticos e acessórios.\n\n👉 *Entre no grupo:*\n{LINK_FASHION}\n\n_Quer entrar em outro grupo também? Manda um \"oi\" que mostro as opções!_"
+      }
+    },
+    "automotive": {
+      "payload": {
+        "number": "5562999999999",
+        "text": "🚗 *Grupo Automotivo*\n\nMandou bem! Aqui postamos ofertas de acessórios para carro, peças, ferramentas e muito mais.\n\n👉 *Entre no grupo:*\n{LINK_AUTOMOTIVE}\n\n_Quer entrar em outro grupo também? Manda um \"oi\" que mostro as opções!_"
+      }
+    },
+    "running": {
+      "payload": {
+        "number": "5562999999999",
+        "text": "🏃 *Grupo de Corrida e Fitness*\n\nBoa escolha, atleta! Aqui você encontra ofertas de tênis, roupas esportivas e equipamentos de treino.\n\n👉 *Entre no grupo:*\n{LINK_RUNNING}\n\n_Quer entrar em outro grupo também? Manda um \"oi\" que mostro as opções!_"
+      }
+    }
+  },
+
+  "webhook_example": {
+    "_description": "Example of incoming webhook payload from Evolution API",
+    "event": "messages.upsert",
+    "instance": "pedalandoali",
+    "data": {
+      "key": {
+        "remoteJid": "5562999999999@s.whatsapp.net",
+        "fromMe": false,
+        "id": "ABCDEF123456"
+      },
+      "pushName": "João Silva",
+      "message": {
+        "conversation": "oi"
+      },
+      "messageType": "conversation",
+      "messageTimestamp": 1704067200
+    }
+  },
+
+  "webhook_list_response_example": {
+    "_description": "Example of list selection webhook payload",
+    "event": "messages.upsert",
+    "instance": "pedalandoali",
+    "data": {
+      "key": {
+        "remoteJid": "5562999999999@s.whatsapp.net",
+        "fromMe": false,
+        "id": "ABCDEF123457"
+      },
+      "pushName": "João Silva",
+      "message": {
+        "listResponseMessage": {
+          "title": "🔥 Grupos de Promoções",
+          "singleSelectReply": {
+            "selectedRowId": "PROMO_GROUPS"
+          }
+        }
+      },
+      "messageType": "listResponseMessage",
+      "messageTimestamp": 1704067260
+    }
+  }
+}
