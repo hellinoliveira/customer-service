@@ -55,7 +55,7 @@ services:
   # Docs: https://doc.evolution-api.com/v2
   # ----------------------------------------------------------------
   evolution-api:
-    image: atendai/evolution-api:v2.2.2
+    image: evoapicloud/evolution-api
     container_name: pedalando_evolution
     restart: always
     depends_on:
@@ -97,9 +97,9 @@ services:
       CACHE_LOCAL_ENABLED: "false"
 
       # --- Webhook Global -> Kestra ---
-      WEBHOOK_GLOBAL_ENABLED: "true"
-      WEBHOOK_GLOBAL_URL: http://kestra:8080/api/v1/webhooks/pedalandoali/pedalandoali-customer-service/pedalandoali-cs-webhook
-      WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS: "true"
+      WEBHOOK_GLOBAL_ENABLED: "false"
+      WEBHOOK_GLOBAL_URL: http://kestra:8080/api/v1/executions/webhook/pedalandoali/pedalandoali-customer-service/pedalandoali-cs-webhook
+      WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS: "false"
       WEBHOOK_EVENTS_QRCODE_UPDATED: "true"
       WEBHOOK_EVENTS_MESSAGES_UPSERT: "true"
       WEBHOOK_EVENTS_MESSAGES_UPDATE: "false"
@@ -182,11 +182,13 @@ services:
                 url: https://repo.maven.apache.org/maven2/
 
       # Secrets for flows (access via {{ secret('KEY') }})
-      SECRET_EVOLUTION_API_URL: http://evolution-api:8080
-      SECRET_EVOLUTION_API_KEY: ${AUTHENTICATION_API_KEY}
-      SECRET_REDIS_HOST: redis
-      SECRET_REDIS_PORT: "6379"
-      SECRET_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # IMPORTANT: All SECRET_* values must be base64 encoded!
+      # To encode: echo -n 'value' | base64
+      SECRET_EVOLUTION_API_URL: aHR0cDovL2V2b2x1dGlvbi1hcGk6ODA4MA==
+      SECRET_EVOLUTION_API_KEY: NDdlODVhYmE2ZjU3YjQ4ZjhlZWFlNmMwMTE0NGY2YTY=
+      SECRET_REDIS_HOST: cmVkaXM=
+      SECRET_REDIS_PORT: NjM3OQ==
+      SECRET_REDIS_PASSWORD: cmVkaXNfc2VjdXJlX3Bhc3M=
     volumes:
       - kestra_storage:/app/storage
       - ./kestra:/app/flows
