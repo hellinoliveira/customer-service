@@ -35,6 +35,7 @@ variables:
   LINK_FASHION: "https://chat.whatsapp.com/JF7mfPnBstxANb4ixMssza"
   LINK_AUTOMOTIVE: "https://chat.whatsapp.com/DF85Zgr5GF9AkcC5OuWpHU"
   LINK_RUNNING: "https://chat.whatsapp.com/FOyM06ACufo2atIisM28Hf"
+  CATALOG_URL: "https://wa.me/c/556282165694"
 
   # State TTL (30 minutes)
   STATE_TTL_SECONDS: 1800
@@ -51,100 +52,56 @@ triggers:
 
 tasks:
   # ============================================================
-  # TASK 1: Parse and Validate Incoming Message
+  # TASK 1: Process Incoming Message (Parse + State + Map)
   # ============================================================
-  - id: parse_message
+  - id: process_incoming
     type: io.kestra.plugin.scripts.python.Script
     containerImage: python:3.11-slim
     beforeCommands:
-      - pip install kestra
+      - pip install kestra redis
+    env:
+      REDIS_HOST: "{{ secret('REDIS_HOST') }}"
+      REDIS_PORT: "{{ secret('REDIS_PORT') }}"
+      REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
     script: |
       import json
       import os
+      import redis
       from datetime import datetime
       from kestra import Kestra
 
-      # Parse webhook payload (from webhook trigger)
+      # --- 1. Parse Message ---
       payload = json.loads('''{{ trigger.body | json }}''')
-
-      # Extract message data
       message_data = payload.get('data', {})
       key = message_data.get('key', {})
       message = message_data.get('message', {})
       push_name = message_data.get('pushName', 'Cliente')
-
-      # Get sender phone (remove @s.whatsapp.net)
       remote_jid = key.get('remoteJid', '')
-      sender_phone = remote_jid.replace('@s.whatsapp.net', '')
+      sender_phone = remote_jid.replace('@s.whatsapp.net', '') # type: ignore
 
-      # Determine message type and content
       message_text = ''
       selected_option = ''
 
-      # Handle different message types
       if 'conversation' in message:
           message_text = message['conversation']
       elif 'extendedTextMessage' in message:
           message_text = message['extendedTextMessage'].get('text', '')
       elif 'listResponseMessage' in message:
-          # User selected from list menu
           selected_option = message['listResponseMessage'].get('singleSelectReply', {}).get('selectedRowId', '')
           message_text = message['listResponseMessage'].get('title', '')
       elif 'buttonsResponseMessage' in message:
-          # User clicked button
           selected_option = message['buttonsResponseMessage'].get('selectedButtonId', '')
           message_text = message['buttonsResponseMessage'].get('selectedDisplayText', '')
 
-      # Skip if from self or group
       from_me = key.get('fromMe', False)
       is_group = '@g.us' in remote_jid
 
       if from_me or is_group:
           print("Skipping: message from self or group")
           Kestra.outputs({'skip': 'true'})
-      else:
-          Kestra.outputs({
-              'skip': 'false',
-              'sender_phone': sender_phone,
-              'sender_jid': remote_jid,
-              'push_name': push_name,
-              'message_text': message_text.strip().lower(),
-              'selected_option': selected_option,
-              'timestamp': datetime.now().isoformat()
-          })
+          exit(0)
 
-  # ============================================================
-  # TASK 2: Skip if Invalid Message
-  # ============================================================
-  - id: check_skip
-    type: io.kestra.plugin.core.flow.If
-    condition: "{{ outputs.parse_message.vars.skip == 'true' }}"
-    then:
-      - id: skip_processing
-        type: io.kestra.plugin.core.log.Log
-        message: "Skipping message processing (from self or group)"
-
-  # ============================================================
-  # TASK 3: Get User State from Redis
-  # ============================================================
-  - id: get_user_state
-    type: io.kestra.plugin.scripts.python.Script
-    runIf: "{{ outputs.parse_message.vars.skip == 'false' }}"
-    containerImage: python:3.11-slim
-    beforeCommands:
-      - pip install redis kestra
-    env:
-      REDIS_HOST: "{{ secret('REDIS_HOST') }}"
-      REDIS_PORT: "{{ secret('REDIS_PORT') }}"
-      REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
-    script: |
-      import redis
-      import json
-      import os
-      from kestra import Kestra
-
-      sender_phone = "{{ outputs.parse_message.vars.sender_phone }}"
-
+      # --- 2. Get User State ---
       r = redis.Redis(
           host=os.environ['REDIS_HOST'],
           port=int(os.environ['REDIS_PORT']),
@@ -161,464 +118,250 @@ tasks:
       else:
           current_menu = 'NONE'
 
-      Kestra.outputs({'current_menu': current_menu})
-
-  # ============================================================
-  # TASK 3.5: Map Text Selection to Action
-  # ============================================================
-  - id: map_selection
-    type: io.kestra.plugin.scripts.python.Script
-    runIf: "{{ outputs.parse_message.vars.skip == 'false' }}"
-    containerImage: python:3.11-slim
-    beforeCommands:
-      - pip install kestra
-    script: |
-      from kestra import Kestra
-
-      current_menu = "{{ outputs.get_user_state.vars.current_menu }}"
-      message_text = "{{ outputs.parse_message.vars.message_text }}"
-      selected_option = "{{ outputs.parse_message.vars.selected_option }}" # Backup if buttons still work for some reason
-
+      # --- 3. Map Selection ---
       final_selection = ""
+      msg = message_text.strip() # type: ignore
 
-      # If we have a direct option ID (from a button/list click), use it
       if selected_option:
           final_selection = selected_option
+      elif current_menu == 'ATTENDANT':
+          final_selection = 'SKIP'
       else:
-          # Text Mapping Logic
-          msg = message_text.strip()
-          
           if current_menu == 'MAIN_MENU':
               if msg == '1':
                   final_selection = 'ATTENDANT'
               elif msg == '2':
                   final_selection = 'PROMO_GROUPS'
-                  
-          elif current_menu == 'NICHE_MENU':
-              if msg == '1':
-                  final_selection = 'NICHE_CYCLING'
-              elif msg == '2':
-                  final_selection = 'NICHE_HOME'
-              elif msg == '3':
-                  final_selection = 'NICHE_FASHION'
-              elif msg == '4':
-                  final_selection = 'NICHE_AUTOMOTIVE'
-              elif msg == '5':
-                  final_selection = 'NICHE_RUNNING'
 
-      Kestra.outputs({'final_selection': final_selection})
+      # --- Output All Data ---
+      Kestra.outputs({
+          'skip': 'false',
+          'sender_phone': sender_phone,
+          'push_name': push_name,
+          'message_text': message_text.strip().lower(), # type: ignore
+          'timestamp': datetime.now().isoformat(),
+          'current_menu': current_menu,
+          'final_selection': final_selection
+      })
 
   # ============================================================
   # TASK 3.8: Debug Print
   # ============================================================
   - id: debug_values
     type: io.kestra.plugin.core.log.Log
-    message: "Menu: {{ outputs.get_user_state.vars.current_menu }}, Text: {{ outputs.parse_message.vars.message_text }}, Selection: {{ outputs.map_selection.vars.final_selection }}"
+    message: "Menu: {{ outputs.process_incoming.vars.current_menu }}, Text: {{ outputs.process_incoming.vars.message_text }}, Selection: {{ outputs.process_incoming.vars.final_selection }}"
 
 
   # ============================================================
   # TASK 4: Route Based on State and Selection
   # ============================================================
-  - id: route_message
-    type: io.kestra.plugin.core.flow.Switch
-    runIf: "{{ outputs.parse_message.vars.skip == 'false' and outputs.get_user_state.vars.current_menu != 'ATTENDANT' }}"
-    value: "{{ outputs.get_user_state.vars.current_menu | default('NONE') }}_{{ outputs.map_selection.vars.final_selection | default('') }}"
+  - id: should_process_message
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.process_incoming.vars.skip == 'false' and outputs.process_incoming.vars.current_menu != 'ATTENDANT' }}"
+    then:
+      - id: route_message
+        type: io.kestra.plugin.core.flow.Switch
+        value: "{{ outputs.process_incoming.vars.current_menu | default('NONE') }}_{{ outputs.process_incoming.vars.final_selection | default('') }}"
 
-    cases:
-      # ---------------------------------------------------------
-      # CASE: New user or reset - Show Main Menu
-      # ---------------------------------------------------------
-      NONE_:
-        - id: send_main_menu
-          type: io.kestra.plugin.core.http.Request
-          uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
-          method: POST
-          headers:
-            Content-Type: application/json
-            apikey: "{{ secret('EVOLUTION_API_KEY') }}"
-          body: |
-            {
-              "number": "{{ outputs.parse_message.vars.sender_phone }}",
-              "delay": 1200,
-              "text": "Olá, {{ outputs.parse_message.vars.push_name }}! 👋\n\nSeja muito bem-vindo(a) à Pedalando Ali! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você. Como posso te ajudar hoje?\n\n1️⃣ *Falar com Atendente*\n   _Tire dúvidas ou peça ajuda personalizada_\n\n2️⃣ *Grupos de Promoções*\n   _Receba ofertas exclusivas no WhatsApp_\n\n👇 *Responda com o número da opção desejada.*"
-            }
-        - id: set_state_main_menu
-          type: io.kestra.plugin.scripts.python.Script
-          containerImage: python:3.11-slim
-          beforeCommands:
-            - pip install redis
-          env:
-            REDIS_HOST: "{{ secret('REDIS_HOST') }}"
-            REDIS_PORT: "{{ secret('REDIS_PORT') }}"
-            REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
-            STATE_TTL: "{{ vars.STATE_TTL_SECONDS }}"
-          script: |
-            import redis
-            import json
-            import os
+        cases:
+          # ---------------------------------------------------------
+          # CASE: New user or reset - Show Main Menu
+          # ---------------------------------------------------------
+          NONE_:
+            - id: send_main_menu
+              type: io.kestra.plugin.core.http.Request
+              uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
+              method: POST
+              headers:
+                Content-Type: application/json
+                apikey: "{{ secret('EVOLUTION_API_KEY') }}"
+              body: |
+                {
+                  "number": "{{ outputs.process_incoming.vars.sender_phone }}",
+                  "delay": 1200,
+                  "text": "Olá, {{ outputs.process_incoming.vars.push_name }}! 👋\n\nSeja muito bem-vindo(a) à Pedalando Ali! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você. Como posso te ajudar hoje?\n\n1️⃣ *Falar com Atendente*\n   _Tire dúvidas ou peça ajuda personalizada_\n\n2️⃣ *Grupos de Promoções*\n   _Receba ofertas exclusivas no WhatsApp_\n\n👇 *Responda com o número da opção desejada.*"
+                }
+            - id: set_state_main_menu
+              type: io.kestra.plugin.scripts.python.Script
+              containerImage: python:3.11-slim
+              beforeCommands:
+                - pip install redis
+              env:
+                REDIS_HOST: "{{ secret('REDIS_HOST') }}"
+                REDIS_PORT: "{{ secret('REDIS_PORT') }}"
+                REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
+                STATE_TTL: "{{ vars.STATE_TTL_SECONDS }}"
+              script: |
+                import redis
+                import json
+                import os
 
-            sender_phone = "{{ outputs.parse_message.vars.sender_phone }}"
-            push_name = "{{ outputs.parse_message.vars.push_name }}"
+                sender_phone = "{{ outputs.process_incoming.vars.sender_phone }}"
+                push_name = "{{ outputs.process_incoming.vars.push_name }}"
 
-            r = redis.Redis(
-                host=os.environ['REDIS_HOST'],
-                port=int(os.environ['REDIS_PORT']),
-                password=os.environ['REDIS_PASSWORD'],
-                decode_responses=True
-            )
+                r = redis.Redis(
+                    host=os.environ['REDIS_HOST'],
+                    port=int(os.environ['REDIS_PORT']),
+                    password=os.environ['REDIS_PASSWORD'],
+                    decode_responses=True
+                )
 
-            state = {
-                'current_menu': 'MAIN_MENU',
-                'push_name': push_name,
-                'last_interaction': "{{ outputs.parse_message.vars.timestamp }}"
-            }
+                state = {
+                    'current_menu': 'MAIN_MENU',
+                    'push_name': push_name,
+                    'last_interaction': "{{ outputs.process_incoming.vars.timestamp }}"
+                }
 
-            r.setex(
-                f"cs:state:{sender_phone}",
-                int(os.environ['STATE_TTL']),
-                json.dumps(state)
-            )
+                r.setex(
+                    f"cs:state:{sender_phone}",
+                    int(os.environ['STATE_TTL']),
+                    json.dumps(state)
+                )
 
-      # ---------------------------------------------------------
-      # CASE: User selected "Falar com Atendente"
-      # ---------------------------------------------------------
-      MAIN_MENU_ATTENDANT:
-        - id: notify_attendant
-          type: io.kestra.plugin.core.http.Request
-          uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
-          method: POST
-          headers:
-            Content-Type: application/json
-            apikey: "{{ secret('EVOLUTION_API_KEY') }}"
-          body: |
-            {
-              "number": "{{ vars.ATTENDANT_PHONE }}",
-              "text": "🔔 *Nova Solicitação de Atendimento*\n\n👤 *Cliente:* {{ outputs.parse_message.vars.push_name }}\n📱 *Telefone:* {{ outputs.parse_message.vars.sender_phone }}\n⏰ *Horário:* {{ outputs.parse_message.vars.timestamp }}\n\n_Responda diretamente ao cliente pelo número acima._"
-            }
-        - id: reply_attendant_wait
-          type: io.kestra.plugin.core.http.Request
-          uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
-          method: POST
-          headers:
-            Content-Type: application/json
-            apikey: "{{ secret('EVOLUTION_API_KEY') }}"
-          body: |
-            {
-              "number": "{{ outputs.parse_message.vars.sender_phone }}",
-              "text": "Perfeito, {{ outputs.parse_message.vars.push_name }}! 🙌\n\nJá avisei nosso time e em breve alguém vai te chamar por aqui mesmo.\n\nEnquanto isso, que tal dar uma olhada no nosso catálogo? Tem muita coisa boa! 👇\n\n🛒 *Catálogo:* https://pedalandoali.com.br/catalogo\n\nSe precisar de algo mais, é só mandar um \"oi\" que a gente recomeça! 😉"
-            }
-        - id: clear_state_attendant
-          type: io.kestra.plugin.scripts.python.Script
-          containerImage: python:3.11-slim
-          beforeCommands:
-            - pip install redis
-          env:
-            REDIS_HOST: "{{ secret('REDIS_HOST') }}"
-            REDIS_PORT: "{{ secret('REDIS_PORT') }}"
-            REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
-        - id: set_state_attendant
-          type: io.kestra.plugin.scripts.python.Script
-          containerImage: python:3.11-slim
-          beforeCommands:
-            - pip install redis
-          env:
-            REDIS_HOST: "{{ secret('REDIS_HOST') }}"
-            REDIS_PORT: "{{ secret('REDIS_PORT') }}"
-            REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
-            ATTENDANT_TTL: "{{ vars.ATTENDANT_TTL_SECONDS }}"
-          script: |
-            import redis
-            import json
-            import os
+          # ---------------------------------------------------------
+          # CASE: User selected "Falar com Atendente"
+          # ---------------------------------------------------------
+          MAIN_MENU_ATTENDANT:
+            - id: reply_attendant_wait
+              type: io.kestra.plugin.core.http.Request
+              uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
+              method: POST
+              headers:
+                Content-Type: application/json
+                apikey: "{{ secret('EVOLUTION_API_KEY') }}"
+              body: |
+                {
+                  "number": "{{ outputs.process_incoming.vars.sender_phone }}",
+                  "text": "Perfeito, {{ outputs.process_incoming.vars.push_name }}! 🙌\n\nJá avisei nosso time e em breve alguém vai te chamar por aqui mesmo.\n\nEnquanto isso, que tal dar uma olhada no nosso catálogo? Tem muita coisa boa! 👇\n\n🛒 *Catálogo:* {{ vars.CATALOG_URL }}\n\nSe precisar de algo mais, é só mandar um \"oi\" 😉",
+                  "linkPreview": false
+                }
+            - id: set_state_attendant
+              type: io.kestra.plugin.scripts.python.Script
+              containerImage: python:3.11-slim
+              beforeCommands:
+                - pip install redis
+              env:
+                REDIS_HOST: "{{ secret('REDIS_HOST') }}"
+                REDIS_PORT: "{{ secret('REDIS_PORT') }}"
+                REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
+                ATTENDANT_TTL: "{{ vars.ATTENDANT_TTL_SECONDS }}"
+              script: |
+                import redis
+                import json
+                import os
 
-            sender_phone = "{{ outputs.parse_message.vars.sender_phone }}"
-            push_name = "{{ outputs.parse_message.vars.push_name }}"
+                sender_phone = "{{ outputs.process_incoming.vars.sender_phone }}"
+                push_name = "{{ outputs.process_incoming.vars.push_name }}"
 
-            r = redis.Redis(
-                host=os.environ['REDIS_HOST'],
-                port=int(os.environ['REDIS_PORT']),
-                password=os.environ['REDIS_PASSWORD'],
-                decode_responses=True
-            )
+                r = redis.Redis(
+                    host=os.environ['REDIS_HOST'],
+                    port=int(os.environ['REDIS_PORT']),
+                    password=os.environ['REDIS_PASSWORD'],
+                    decode_responses=True
+                )
 
-            state = {
-                'current_menu': 'ATTENDANT',
-                'push_name': push_name,
-                'last_interaction': "{{ outputs.parse_message.vars.timestamp }}"
-            }
+                state = {
+                    'current_menu': 'ATTENDANT',
+                    'push_name': push_name,
+                    'last_interaction': "{{ outputs.process_incoming.vars.timestamp }}"
+                }
 
-            r.setex(
-                f"cs:state:{sender_phone}",
-                int(os.environ['ATTENDANT_TTL']),
-                json.dumps(state)
-            )
+                r.setex(
+                    f"cs:state:{sender_phone}",
+                    int(os.environ['ATTENDANT_TTL']),
+                    json.dumps(state)
+                )
 
-      # ---------------------------------------------------------
-      # CASE: User selected "Grupos de Promoções"
-      # ---------------------------------------------------------
-      MAIN_MENU_PROMO_GROUPS:
-        - id: send_niche_menu
-          type: io.kestra.plugin.core.http.Request
-          uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
-          method: POST
-          headers:
-            Content-Type: application/json
-            apikey: "{{ secret('EVOLUTION_API_KEY') }}"
-          body: |
-            {
-              "number": "{{ outputs.parse_message.vars.sender_phone }}",
-              "delay": 1200,
-              "text": "Massa! 🎯\n\nTemos grupos exclusivos para cada estilo. Escolha o seu e receba as melhores ofertas direto no WhatsApp:\n\n1️⃣ *Ciclismo*\n   _Bikes, peças, acessórios e vestuário_\n\n2️⃣ *Casa*\n   _Decoração, eletroportáteis e utilidades_\n\n3️⃣ *Moda e Beleza*\n   _Roupas, calçados e cosméticos_\n\n4️⃣ *Automotivo*\n   _Acessórios, peças e ferramentas_\n\n5️⃣ *Corrida e Fitness*\n   _Tênis, roupas e equipamentos_\n\n👇 *Responda com o número da opção desejada.*"
-            }
-        - id: set_state_niche_menu
-          type: io.kestra.plugin.scripts.python.Script
-          containerImage: python:3.11-slim
-          beforeCommands:
-            - pip install redis
-          env:
-            REDIS_HOST: "{{ secret('REDIS_HOST') }}"
-            REDIS_PORT: "{{ secret('REDIS_PORT') }}"
-            REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
-            STATE_TTL: "{{ vars.STATE_TTL_SECONDS }}"
-          script: |
-            import redis
-            import json
-            import os
+          # ---------------------------------------------------------
+          # CASE: User selected "Grupos de Promoções"
+          # ---------------------------------------------------------
+          MAIN_MENU_PROMO_GROUPS:
+            - id: send_all_groups
+              type: io.kestra.plugin.core.http.Request
+              uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
+              method: POST
+              headers:
+                Content-Type: application/json
+                apikey: "{{ secret('EVOLUTION_API_KEY') }}"
+              body: |
+                {
+                  "number": "{{ outputs.process_incoming.vars.sender_phone }}",
+                  "delay": 1200,
+                  "text": "Massa! 🎯\n\nTemos grupos exclusivos para cada estilo. Escolha o seu e receba as melhores ofertas direto no WhatsApp:\n\n1️⃣ *Ciclismo*\n   _Bikes, peças, acessórios e vestuário_\n   🔗 {{ vars.LINK_CYCLING }}\n\n2️⃣ *Casa*\n   _Decoração, eletroportáteis e utilidades_\n   🔗 {{ vars.LINK_HOME }}\n\n3️⃣ *Moda e Beleza*\n   _Roupas, calçados e cosméticos_\n   🔗 {{ vars.LINK_FASHION }}\n\n4️⃣ *Automotivo*\n   _Acessórios, peças e ferramentas_\n   🔗 {{ vars.LINK_AUTOMOTIVE }}\n\n5️⃣ *Corrida e Fitness*\n   _Tênis, roupas e equipamentos_\n   🔗 {{ vars.LINK_RUNNING }}"
+                }
+            - id: clear_state_promo
+              type: io.kestra.plugin.scripts.python.Script
+              containerImage: python:3.11-slim
+              beforeCommands:
+                - pip install redis
+              env:
+                REDIS_HOST: "{{ secret('REDIS_HOST') }}"
+                REDIS_PORT: "{{ secret('REDIS_PORT') }}"
+                REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
+              script: |
+                import redis
+                import os
+                sender_phone = "{{ outputs.process_incoming.vars.sender_phone }}"
+                r = redis.Redis(host=os.environ['REDIS_HOST'], port=int(os.environ['REDIS_PORT']), password=os.environ['REDIS_PASSWORD'], decode_responses=True)
+                r.delete(f"cs:state:{sender_phone}")
 
-            sender_phone = "{{ outputs.parse_message.vars.sender_phone }}"
-            push_name = "{{ outputs.parse_message.vars.push_name }}"
+        # ---------------------------------------------------------
+        # DEFAULT: Any text message resets to main menu
+        # ---------------------------------------------------------
+        defaults:
+          - id: handle_unknown_or_reset
+            type: io.kestra.plugin.core.http.Request
+            uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
+            method: POST
+            headers:
+              Content-Type: application/json
+              apikey: "{{ secret('EVOLUTION_API_KEY') }}"
+            body: |
+              {
+                "number": "{{ outputs.process_incoming.vars.sender_phone }}",
+                "delay": 1200,
+                "text": "Olá, {{ outputs.process_incoming.vars.push_name }}! 👋\n\nSeja muito bem-vindo(a) à Pedalando Ali! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você. Como posso te ajudar hoje?\n\n1️⃣ *Falar com Atendente*\n   _Tire dúvidas ou peça ajuda personalizada_\n\n2️⃣ *Grupos de Promoções*\n   _Receba ofertas exclusivas no WhatsApp_\n\n👇 *Responda com o número da opção desejada.*"
+              }
+          - id: reset_state_to_main
+            type: io.kestra.plugin.scripts.python.Script
+            containerImage: python:3.11-slim
+            beforeCommands:
+              - pip install redis
+            env:
+              REDIS_HOST: "{{ secret('REDIS_HOST') }}"
+              REDIS_PORT: "{{ secret('REDIS_PORT') }}"
+              REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
+              STATE_TTL: "{{ vars.STATE_TTL_SECONDS }}"
+            script: |
+              import redis
+              import json
+              import os
 
-            r = redis.Redis(
-                host=os.environ['REDIS_HOST'],
-                port=int(os.environ['REDIS_PORT']),
-                password=os.environ['REDIS_PASSWORD'],
-                decode_responses=True
-            )
+              sender_phone = "{{ outputs.process_incoming.vars.sender_phone }}"
+              push_name = "{{ outputs.process_incoming.vars.push_name }}"
 
-            state = {
-                'current_menu': 'NICHE_MENU',
-                'push_name': push_name,
-                'last_interaction': "{{ outputs.parse_message.vars.timestamp }}"
-            }
+              r = redis.Redis(
+                  host=os.environ['REDIS_HOST'],
+                  port=int(os.environ['REDIS_PORT']),
+                  password=os.environ['REDIS_PASSWORD'],
+                  decode_responses=True
+              )
 
-            r.setex(
-                f"cs:state:{sender_phone}",
-                int(os.environ['STATE_TTL']),
-                json.dumps(state)
-            )
+              state = {
+                  'current_menu': 'MAIN_MENU',
+                  'push_name': push_name,
+                  'last_interaction': "{{ outputs.process_incoming.vars.timestamp }}"
+              }
 
-      # ---------------------------------------------------------
-      # CASE: User selected Ciclismo
-      # ---------------------------------------------------------
-      NICHE_MENU_NICHE_CYCLING:
-        - id: send_cycling_link
-          type: io.kestra.plugin.core.http.Request
-          uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
-          method: POST
-          headers:
-            Content-Type: application/json
-            apikey: "{{ secret('EVOLUTION_API_KEY') }}"
-          body: |
-            {
-              "number": "{{ outputs.parse_message.vars.sender_phone }}",
-              "text": "🚴 *Grupo de Ciclismo*\n\nExcelente escolha! Aqui você vai encontrar ofertas de bikes, peças, acessórios e tudo para pedalar.\n\n👉 *Entre no grupo:*\n{{ vars.LINK_CYCLING }}\n\n_Quer entrar em outro grupo também? Manda um \"oi\" que mostro as opções!_"
-            }
-        - id: clear_state_cycling
-          type: io.kestra.plugin.scripts.python.Script
-          containerImage: python:3.11-slim
-          beforeCommands:
-            - pip install redis
-          env:
-            REDIS_HOST: "{{ secret('REDIS_HOST') }}"
-            REDIS_PORT: "{{ secret('REDIS_PORT') }}"
-            REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
-          script: |
-            import redis
-            import os
-            sender_phone = "{{ outputs.parse_message.vars.sender_phone }}"
-            r = redis.Redis(host=os.environ['REDIS_HOST'], port=int(os.environ['REDIS_PORT']), password=os.environ['REDIS_PASSWORD'], decode_responses=True)
-            r.delete(f"cs:state:{sender_phone}")
-
-      # ---------------------------------------------------------
-      # CASE: User selected Casa
-      # ---------------------------------------------------------
-      NICHE_MENU_NICHE_HOME:
-        - id: send_home_link
-          type: io.kestra.plugin.core.http.Request
-          uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
-          method: POST
-          headers:
-            Content-Type: application/json
-            apikey: "{{ secret('EVOLUTION_API_KEY') }}"
-          body: |
-            {
-              "number": "{{ outputs.parse_message.vars.sender_phone }}",
-              "text": "🏠 *Grupo de Casa*\n\nÓtima escolha! Aqui postamos ofertas de decoração, eletroportáteis, utilidades domésticas e muito mais.\n\n👉 *Entre no grupo:*\n{{ vars.LINK_HOME }}\n\n_Quer entrar em outro grupo também? Manda um \"oi\" que mostro as opções!_"
-            }
-        - id: clear_state_home
-          type: io.kestra.plugin.scripts.python.Script
-          containerImage: python:3.11-slim
-          beforeCommands:
-            - pip install redis
-          env:
-            REDIS_HOST: "{{ secret('REDIS_HOST') }}"
-            REDIS_PORT: "{{ secret('REDIS_PORT') }}"
-            REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
-          script: |
-            import redis
-            import os
-            sender_phone = "{{ outputs.parse_message.vars.sender_phone }}"
-            r = redis.Redis(host=os.environ['REDIS_HOST'], port=int(os.environ['REDIS_PORT']), password=os.environ['REDIS_PASSWORD'], decode_responses=True)
-            r.delete(f"cs:state:{sender_phone}")
-
-      # ---------------------------------------------------------
-      # CASE: User selected Moda e Beleza
-      # ---------------------------------------------------------
-      NICHE_MENU_NICHE_FASHION:
-        - id: send_fashion_link
-          type: io.kestra.plugin.core.http.Request
-          uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
-          method: POST
-          headers:
-            Content-Type: application/json
-            apikey: "{{ secret('EVOLUTION_API_KEY') }}"
-          body: |
-            {
-              "number": "{{ outputs.parse_message.vars.sender_phone }}",
-              "text": "👗 *Grupo de Moda e Beleza*\n\nArrasou na escolha! Aqui você encontra ofertas de roupas, calçados, cosméticos e acessórios.\n\n👉 *Entre no grupo:*\n{{ vars.LINK_FASHION }}\n\n_Quer entrar em outro grupo também? Manda um \"oi\" que mostro as opções!_"
-            }
-        - id: clear_state_fashion
-          type: io.kestra.plugin.scripts.python.Script
-          containerImage: python:3.11-slim
-          beforeCommands:
-            - pip install redis
-          env:
-            REDIS_HOST: "{{ secret('REDIS_HOST') }}"
-            REDIS_PORT: "{{ secret('REDIS_PORT') }}"
-            REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
-          script: |
-            import redis
-            import os
-            sender_phone = "{{ outputs.parse_message.vars.sender_phone }}"
-            r = redis.Redis(host=os.environ['REDIS_HOST'], port=int(os.environ['REDIS_PORT']), password=os.environ['REDIS_PASSWORD'], decode_responses=True)
-            r.delete(f"cs:state:{sender_phone}")
-
-      # ---------------------------------------------------------
-      # CASE: User selected Automotivo
-      # ---------------------------------------------------------
-      NICHE_MENU_NICHE_AUTOMOTIVE:
-        - id: send_automotive_link
-          type: io.kestra.plugin.core.http.Request
-          uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
-          method: POST
-          headers:
-            Content-Type: application/json
-            apikey: "{{ secret('EVOLUTION_API_KEY') }}"
-          body: |
-            {
-              "number": "{{ outputs.parse_message.vars.sender_phone }}",
-              "text": "🚗 *Grupo Automotivo*\n\nMandou bem! Aqui postamos ofertas de acessórios para carro, peças, ferramentas e muito mais.\n\n👉 *Entre no grupo:*\n{{ vars.LINK_AUTOMOTIVE }}\n\n_Quer entrar em outro grupo também? Manda um \"oi\" que mostro as opções!_"
-            }
-        - id: clear_state_automotive
-          type: io.kestra.plugin.scripts.python.Script
-          containerImage: python:3.11-slim
-          beforeCommands:
-            - pip install redis
-          env:
-            REDIS_HOST: "{{ secret('REDIS_HOST') }}"
-            REDIS_PORT: "{{ secret('REDIS_PORT') }}"
-            REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
-          script: |
-            import redis
-            import os
-            sender_phone = "{{ outputs.parse_message.vars.sender_phone }}"
-            r = redis.Redis(host=os.environ['REDIS_HOST'], port=int(os.environ['REDIS_PORT']), password=os.environ['REDIS_PASSWORD'], decode_responses=True)
-            r.delete(f"cs:state:{sender_phone}")
-
-      # ---------------------------------------------------------
-      # CASE: User selected Corrida e Fitness
-      # ---------------------------------------------------------
-      NICHE_MENU_NICHE_RUNNING:
-        - id: send_running_link
-          type: io.kestra.plugin.core.http.Request
-          uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
-          method: POST
-          headers:
-            Content-Type: application/json
-            apikey: "{{ secret('EVOLUTION_API_KEY') }}"
-          body: |
-            {
-              "number": "{{ outputs.parse_message.vars.sender_phone }}",
-              "text": "🏃 *Grupo de Corrida e Fitness*\n\nBoa escolha, atleta! Aqui você encontra ofertas de tênis, roupas esportivas e equipamentos de treino.\n\n👉 *Entre no grupo:*\n{{ vars.LINK_RUNNING }}\n\n_Quer entrar em outro grupo também? Manda um \"oi\" que mostro as opções!_"
-            }
-        - id: clear_state_running
-          type: io.kestra.plugin.scripts.python.Script
-          containerImage: python:3.11-slim
-          beforeCommands:
-            - pip install redis
-          env:
-            REDIS_HOST: "{{ secret('REDIS_HOST') }}"
-            REDIS_PORT: "{{ secret('REDIS_PORT') }}"
-            REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
-          script: |
-            import redis
-            import os
-            sender_phone = "{{ outputs.parse_message.vars.sender_phone }}"
-            r = redis.Redis(host=os.environ['REDIS_HOST'], port=int(os.environ['REDIS_PORT']), password=os.environ['REDIS_PASSWORD'], decode_responses=True)
-            r.delete(f"cs:state:{sender_phone}")
-
-    # ---------------------------------------------------------
-    # DEFAULT: Any text message resets to main menu
-    # ---------------------------------------------------------
-    defaults:
-      - id: handle_unknown_or_reset
-        type: io.kestra.plugin.core.http.Request
-        uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
-        method: POST
-        headers:
-          Content-Type: application/json
-          apikey: "{{ secret('EVOLUTION_API_KEY') }}"
-        body: |
-          {
-            "number": "{{ outputs.parse_message.vars.sender_phone }}",
-            "delay": 1200,
-            "text": "Olá, {{ outputs.parse_message.vars.push_name }}! 👋\n\nSeja muito bem-vindo(a) à Pedalando Ali! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você. Como posso te ajudar hoje?\n\n1️⃣ *Falar com Atendente*\n   _Tire dúvidas ou peça ajuda personalizada_\n\n2️⃣ *Grupos de Promoções*\n   _Receba ofertas exclusivas no WhatsApp_\n\n👇 *Responda com o número da opção desejada.*"
-          }
-      - id: reset_state_to_main
-        type: io.kestra.plugin.scripts.python.Script
-        containerImage: python:3.11-slim
-        beforeCommands:
-          - pip install redis
-        env:
-          REDIS_HOST: "{{ secret('REDIS_HOST') }}"
-          REDIS_PORT: "{{ secret('REDIS_PORT') }}"
-          REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
-          STATE_TTL: "{{ vars.STATE_TTL_SECONDS }}"
-        script: |
-          import redis
-          import json
-          import os
-
-          sender_phone = "{{ outputs.parse_message.vars.sender_phone }}"
-          push_name = "{{ outputs.parse_message.vars.push_name }}"
-
-          r = redis.Redis(
-              host=os.environ['REDIS_HOST'],
-              port=int(os.environ['REDIS_PORT']),
-              password=os.environ['REDIS_PASSWORD'],
-              decode_responses=True
-          )
-
-          state = {
-              'current_menu': 'MAIN_MENU',
-              'push_name': push_name
-          }
-
-          r.setex(
-              f"cs:state:{sender_phone}",
-              int(os.environ['STATE_TTL']),
-              json.dumps(state)
-          )
+              r.setex(
+                  f"cs:state:{sender_phone}",
+                  int(os.environ['STATE_TTL']),
+                  json.dumps(state)
+              )
+    else:
+      - id: log_attendant_mode_skip
+        type: io.kestra.plugin.core.log.Log
+        message: "Skipping bot response - user {{ outputs.process_incoming.vars.sender_phone }} is in ATTENDANT mode (human takeover)"
 
 errors:
   - id: error_handler
