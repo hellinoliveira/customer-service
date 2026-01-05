@@ -128,10 +128,11 @@ tasks:
           final_selection = 'SKIP'
       else:
           if current_menu == 'MAIN_MENU':
-              if msg == '1':
-                  final_selection = 'ATTENDANT'
-              elif msg == '2':
+              if msg == '2':
                   final_selection = 'PROMO_GROUPS'
+              else:
+                  # Any message other than "2" goes to attendant
+                  final_selection = 'ATTENDANT'
 
       # --- Output All Data ---
       Kestra.outputs({
@@ -179,7 +180,7 @@ tasks:
                 {
                   "number": "{{ outputs.process_incoming.vars.sender_phone }}",
                   "delay": 1200,
-                  "text": "Olá, {{ outputs.process_incoming.vars.push_name }}! 👋\n\nSeja muito bem-vindo(a) à Pedalando Ali! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você. Como posso te ajudar hoje?\n\n1️⃣ *Falar com Atendente*\n   _Tire dúvidas ou peça ajuda personalizada_\n\n2️⃣ *Grupos de Promoções*\n   _Receba ofertas exclusivas no WhatsApp_\n\n👇 *Responda com o número da opção desejada.*"
+                  "text": "Olá, {{ outputs.process_incoming.vars.push_name }}! 👋\n\nSeja muito bem-vindo(a) à Pedalando Ali! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você. Como posso te ajudar hoje?\n\n🔹 *Grupos de Promoções*\n   _Responda 2 para receber links dos grupos exclusivos_\n\n🔹 *Falar com Atendente*\n   _Qualquer outra mensagem te conecta com nosso time_\n\n👉 Digite *2* para grupos ou mande qualquer mensagem para falar conosco!"
                 }
             - id: set_state_main_menu
               type: io.kestra.plugin.scripts.python.Script
@@ -320,7 +321,7 @@ tasks:
               {
                 "number": "{{ outputs.process_incoming.vars.sender_phone }}",
                 "delay": 1200,
-                "text": "Olá, {{ outputs.process_incoming.vars.push_name }}! 👋\n\nSeja muito bem-vindo(a) à Pedalando Ali! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você. Como posso te ajudar hoje?\n\n1️⃣ *Falar com Atendente*\n   _Tire dúvidas ou peça ajuda personalizada_\n\n2️⃣ *Grupos de Promoções*\n   _Receba ofertas exclusivas no WhatsApp_\n\n👇 *Responda com o número da opção desejada.*"
+                "text": "Olá, {{ outputs.process_incoming.vars.push_name }}! 👋\n\nSeja muito bem-vindo(a) à Pedalando Ali! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você. Como posso te ajudar hoje?\n\n🔹 *Grupos de Promoções*\n   _Responda 2 para receber links dos grupos exclusivos_\n\n🔹 *Falar com Atendente*\n   _Qualquer outra mensagem te conecta com nosso time_\n\n👉 Digite *2* para grupos ou mande qualquer mensagem para falar conosco!"
               }
           - id: reset_state_to_main
             type: io.kestra.plugin.scripts.python.Script
