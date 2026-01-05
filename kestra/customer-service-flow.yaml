@@ -128,10 +128,10 @@ tasks:
           final_selection = 'SKIP'
       else:
           if current_menu == 'MAIN_MENU':
-              if msg == '2':
+              if msg == '1':
                   final_selection = 'PROMO_GROUPS'
               else:
-                  # Any message other than "2" goes to attendant
+                  # Any message other than "1" goes to attendant (silent handoff)
                   final_selection = 'ATTENDANT'
 
       # --- Output All Data ---
@@ -180,7 +180,7 @@ tasks:
                 {
                   "number": "{{ outputs.process_incoming.vars.sender_phone }}",
                   "delay": 1200,
-                  "text": "Olá, {{ outputs.process_incoming.vars.push_name }}! 👋\n\nSeja muito bem-vindo(a) à Pedalando Ali! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você. Como posso te ajudar hoje?\n\n🔹 *Grupos de Promoções*\n   _Responda 2 para receber links dos grupos exclusivos_\n\n🔹 *Falar com Atendente*\n   _Qualquer outra mensagem te conecta com nosso time_\n\n👉 Digite *2* para grupos ou mande qualquer mensagem para falar conosco!"
+                  "text": "Olá, {{ outputs.process_incoming.vars.push_name }}! 👋\n\nSeja bem-vindo à Pedalando Ali! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você.\n\n🎯 *Acesse nossos Grupos de Promoções*\n   Responda *1* para receber os links\n\n💬 *Precisa de Ajuda?*\n   Digite sua dúvida que um atendente irá responder"
                 }
             - id: set_state_main_menu
               type: io.kestra.plugin.scripts.python.Script
@@ -220,22 +220,9 @@ tasks:
                 )
 
           # ---------------------------------------------------------
-          # CASE: User selected "Falar com Atendente"
+          # CASE: User message goes to attendant (silent handoff)
           # ---------------------------------------------------------
           MAIN_MENU_ATTENDANT:
-            - id: reply_attendant_wait
-              type: io.kestra.plugin.core.http.Request
-              uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
-              method: POST
-              headers:
-                Content-Type: application/json
-                apikey: "{{ secret('EVOLUTION_API_KEY') }}"
-              body: |
-                {
-                  "number": "{{ outputs.process_incoming.vars.sender_phone }}",
-                  "text": "Perfeito, {{ outputs.process_incoming.vars.push_name }}! 🙌\n\nJá avisei nosso time e em breve alguém vai te chamar por aqui mesmo.\n\nEnquanto isso, que tal dar uma olhada no nosso catálogo? Tem muita coisa boa! 👇\n\n🛒 *Catálogo:* {{ vars.CATALOG_URL }}\n\nSe precisar de algo mais, é só mandar um \"oi\" 😉",
-                  "linkPreview": false
-                }
             - id: set_state_attendant
               type: io.kestra.plugin.scripts.python.Script
               containerImage: python:3.11-slim
@@ -321,7 +308,7 @@ tasks:
               {
                 "number": "{{ outputs.process_incoming.vars.sender_phone }}",
                 "delay": 1200,
-                "text": "Olá, {{ outputs.process_incoming.vars.push_name }}! 👋\n\nSeja muito bem-vindo(a) à Pedalando Ali! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você. Como posso te ajudar hoje?\n\n🔹 *Grupos de Promoções*\n   _Responda 2 para receber links dos grupos exclusivos_\n\n🔹 *Falar com Atendente*\n   _Qualquer outra mensagem te conecta com nosso time_\n\n👉 Digite *2* para grupos ou mande qualquer mensagem para falar conosco!"
+                "text": "Olá, {{ outputs.process_incoming.vars.push_name }}! 👋\n\nSeja bem-vindo à Pedalando Ali! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você.\n\n🎯 *Acesse nossos Grupos de Promoções*\n   Responda *1* para receber os links\n\n💬 *Precisa de Ajuda?*\n   Digite sua dúvida que um atendente irá responder"
               }
           - id: reset_state_to_main
             type: io.kestra.plugin.scripts.python.Script
