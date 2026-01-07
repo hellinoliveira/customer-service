@@ -63,6 +63,7 @@ tasks:
       REDIS_HOST: "{{ secret('REDIS_HOST') }}"
       REDIS_PORT: "{{ secret('REDIS_PORT') }}"
       REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
+      ATTENDANT_TTL_SECONDS: "{{ vars.ATTENDANT_TTL_SECONDS }}"
     script: |
       import json
       import os
@@ -71,7 +72,7 @@ tasks:
       from kestra import Kestra
 
       # --- 1. Parse Message ---
-      payload = json.loads('''{{ trigger.body | json }}''')
+      payload = json.loads('''{% if trigger is defined %}{{ trigger.body | json }}{% else %}{{ inputs.webhook_payload | json }}{% endif %}''')
       message_data = payload.get('data', {})
       key = message_data.get('key', {})
       message = message_data.get('message', {})
@@ -96,9 +97,10 @@ tasks:
       from_me = key.get('fromMe', False)
       is_group = '@g.us' in remote_jid
 
-      if from_me or is_group:
-          print("Skipping: message from self or group")
-          Kestra.outputs({'skip': 'true'})
+      # Skip groups immediately
+      if is_group:
+          print(f"Skipping group message: {remote_jid}")
+          Kestra.outputs({'skip': 'true', 'sender_phone': sender_phone, 'push_name': push_name, 'current_menu': 'SKIP'})
           exit(0)
 
       # --- 2. Get User State ---
@@ -118,6 +120,27 @@ tasks:
       else:
           current_menu = 'NONE'
 
+      # --- 3. Handle "YOU initiated conversation" scenario ---
+      if from_me and current_menu == 'NONE':
+          # You sent a message to someone with no state = You're initiating contact
+          # Set them to ATTENDANT mode for 24h
+          attendant_ttl = int(os.environ.get('ATTENDANT_TTL_SECONDS', '86400'))
+          state = {
+              'current_menu': 'ATTENDANT',
+              'push_name': push_name,
+              'last_interaction': datetime.now().isoformat()
+          }
+          r.setex(state_key, attendant_ttl, json.dumps(state))
+          print(f"You initiated conversation with {sender_phone} - set to ATTENDANT mode (24h)")
+          Kestra.outputs({'skip': 'true', 'sender_phone': sender_phone, 'push_name': push_name, 'current_menu': 'ATTENDANT'})
+          exit(0)
+
+      # Skip messages from self (after checking initiation)
+      if from_me:
+          print("Skipping: message from self")
+          Kestra.outputs({'skip': 'true', 'sender_phone': sender_phone, 'push_name': push_name, 'current_menu': 'SKIP'})
+          exit(0)
+
       # --- 3. Map Selection ---
       final_selection = ""
       msg = message_text.strip() # type: ignore
@@ -125,6 +148,9 @@ tasks:
       if selected_option:
           final_selection = selected_option
       elif current_menu == 'ATTENDANT':
+          # Refresh TTL to keep conversation open
+          attendant_ttl = int(os.environ.get('ATTENDANT_TTL_SECONDS', '86400'))
+          r.expire(state_key, attendant_ttl)
           final_selection = 'SKIP'
       else:
           if current_menu == 'MAIN_MENU':
@@ -146,11 +172,15 @@ tasks:
       })
 
   # ============================================================
-  # TASK 3.8: Debug Print
+  # TASK 2: Debug Print (only if not skipped)
   # ============================================================
   - id: debug_values
-    type: io.kestra.plugin.core.log.Log
-    message: "Menu: {{ outputs.process_incoming.vars.current_menu }}, Text: {{ outputs.process_incoming.vars.message_text }}, Selection: {{ outputs.process_incoming.vars.final_selection }}"
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.process_incoming.vars.skip == 'false' }}"
+    then:
+      - id: log_debug_info
+        type: io.kestra.plugin.core.log.Log
+        message: "Menu: {{ outputs.process_incoming.vars.current_menu }}, Text: {{ outputs.process_incoming.vars.message_text }}, Selection: {{ outputs.process_incoming.vars.final_selection }}"
 
 
   # ============================================================
@@ -180,7 +210,7 @@ tasks:
                 {
                   "number": "{{ outputs.process_incoming.vars.sender_phone }}",
                   "delay": 1200,
-                  "text": "Olá, {{ outputs.process_incoming.vars.push_name }}! 👋\n\nSeja bem-vindo à Pedalando Ali! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você.\n\n🎯 *Acesse nossos Grupos de Promoções*\n   Responda *1* para receber os links\n\n💬 *Precisa de Ajuda?*\n   Digite sua dúvida que um atendente irá responder"
+                  "text": "Olá, {{ outputs.process_incoming.vars.push_name }}! 👋\n\nSeja bem vindo ao PedalandoAli! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você.\n\n🎯 *Acesse nossos Grupos de Promoções*\n   Responda *1* para receber os links\n\n💬 *Precisa de Ajuda?*\n   Digite sua dúvida que um atendente irá responder"
                 }
             - id: set_state_main_menu
               type: io.kestra.plugin.scripts.python.Script
