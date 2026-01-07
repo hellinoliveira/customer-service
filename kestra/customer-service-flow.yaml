@@ -178,8 +178,10 @@ tasks:
           if current_menu == 'MAIN_MENU':
               if msg == '1':
                   final_selection = 'PROMO_GROUPS'
+              elif msg == '2':
+                  final_selection = 'CATALOG'
               else:
-                  # Any message other than "1" goes to attendant (silent handoff)
+                  # Any message other than "1" or "2" goes to attendant (silent handoff)
                   final_selection = 'ATTENDANT'
 
       # Release lock
@@ -235,7 +237,7 @@ tasks:
                 {
                   "number": "{{ outputs.process_incoming.vars.sender_phone }}",
                   "delay": 1200,
-                  "text": "Olá, {{ outputs.process_incoming.vars.push_name }}! 👋\n\nSeja bem vindo ao PedalandoAli! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você.\n\n🎯 *Acesse nossos Grupos de Promoções*\n   Responda *1* para receber os links\n\n💬 *Precisa de Ajuda?*\n   Digite sua dúvida que um atendente irá responder"
+                  "text": "Olá, {{ outputs.process_incoming.vars.push_name }}! 👋\n\nSeja bem vindo ao PedalandoAli! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você.\n\n🎯 *Grupos de Promoções*\n   Responda *1* para receber os links\n\n📦 *Catálogo de Produtos*\n   Responda *2* para ver nosso catálogo de produtos de ciclismo\n\n💬 *Precisa de Ajuda?*\n   Digite sua dúvida que um atendente irá responder"
                 }
 
           # ---------------------------------------------------------
@@ -297,6 +299,39 @@ tasks:
                   "text": "Massa! 🎯\n\nTemos grupos exclusivos para cada estilo. Escolha o seu e receba as melhores ofertas direto no WhatsApp:\n\n1️⃣ *Ciclismo*\n   _Bikes, peças, acessórios e vestuário_\n   🔗 {{ vars.LINK_CYCLING }}\n\n2️⃣ *Casa*\n   _Decoração, eletroportáteis e utilidades_\n   🔗 {{ vars.LINK_HOME }}\n\n3️⃣ *Moda e Beleza*\n   _Roupas, calçados e cosméticos_\n   🔗 {{ vars.LINK_FASHION }}\n\n4️⃣ *Automotivo*\n   _Acessórios, peças e ferramentas_\n   🔗 {{ vars.LINK_AUTOMOTIVE }}\n\n5️⃣ *Corrida e Fitness*\n   _Tênis, roupas e equipamentos_\n   🔗 {{ vars.LINK_RUNNING }}"
                 }
             - id: clear_state_promo
+              type: io.kestra.plugin.scripts.python.Script
+              containerImage: python:3.11-slim
+              beforeCommands:
+                - pip install redis
+              env:
+                REDIS_HOST: "{{ secret('REDIS_HOST') }}"
+                REDIS_PORT: "{{ secret('REDIS_PORT') }}"
+                REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
+              script: |
+                import redis
+                import os
+                sender_phone = "{{ outputs.process_incoming.vars.sender_phone }}"
+                r = redis.Redis(host=os.environ['REDIS_HOST'], port=int(os.environ['REDIS_PORT']), password=os.environ['REDIS_PASSWORD'], decode_responses=True)
+                r.delete(f"cs:state:{sender_phone}")
+
+          # ---------------------------------------------------------
+          # CASE: User selected "Catálogo"
+          # ---------------------------------------------------------
+          MAIN_MENU_CATALOG:
+            - id: send_catalog
+              type: io.kestra.plugin.core.http.Request
+              uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
+              method: POST
+              headers:
+                Content-Type: application/json
+                apikey: "{{ secret('EVOLUTION_API_KEY') }}"
+              body: |
+                {
+                  "number": "{{ outputs.process_incoming.vars.sender_phone }}",
+                  "delay": 1200,
+                  "text": "📦 *Catálogo de Produtos*\n\nAcesse nosso catálogo completo com todas as ofertas:\n\n🔗 {{ vars.CATALOG_URL }}\n\nQualquer dúvida é só chamar! 😉"
+                }
+            - id: clear_state_catalog
               type: io.kestra.plugin.scripts.python.Script
               containerImage: python:3.11-slim
               beforeCommands:
