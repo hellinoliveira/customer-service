@@ -64,6 +64,7 @@ tasks:
       REDIS_PORT: "{{ secret('REDIS_PORT') }}"
       REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
       ATTENDANT_TTL_SECONDS: "{{ vars.ATTENDANT_TTL_SECONDS }}"
+      STATE_TTL_SECONDS: "{{ vars.STATE_TTL_SECONDS }}"
     script: |
       import json
       import os
@@ -112,6 +113,16 @@ tasks:
       )
 
       state_key = f"cs:state:{sender_phone}"
+      lock_key = f"cs:lock:{sender_phone}"
+
+      # --- Acquire lock to prevent race conditions ---
+      # If another message from this user is being processed, skip this one
+      lock_acquired = r.set(lock_key, "1", nx=True, ex=30)
+      if not lock_acquired:
+          print(f"Skipping: another message from {sender_phone} is being processed")
+          Kestra.outputs({'skip': 'true', 'sender_phone': sender_phone, 'push_name': push_name, 'current_menu': 'LOCKED'})
+          exit(0)
+
       state_data = r.get(state_key)
 
       if state_data:
@@ -152,6 +163,17 @@ tasks:
           attendant_ttl = int(os.environ.get('ATTENDANT_TTL_SECONDS', '86400'))
           r.expire(state_key, attendant_ttl)
           final_selection = 'SKIP'
+      elif current_menu == 'NONE':
+          # New user - set state immediately to prevent race condition
+          state_ttl = int(os.environ.get('STATE_TTL_SECONDS', '1800'))
+          state = {
+              'current_menu': 'MAIN_MENU',
+              'push_name': push_name,
+              'last_interaction': datetime.now().isoformat()
+          }
+          r.setex(state_key, state_ttl, json.dumps(state))
+          print(f"New user {sender_phone} - state set to MAIN_MENU")
+          final_selection = 'NEW_USER'
       else:
           if current_menu == 'MAIN_MENU':
               if msg == '1':
@@ -159,6 +181,9 @@ tasks:
               else:
                   # Any message other than "1" goes to attendant (silent handoff)
                   final_selection = 'ATTENDANT'
+
+      # Release lock
+      r.delete(lock_key)
 
       # --- Output All Data ---
       Kestra.outputs({
@@ -196,9 +221,9 @@ tasks:
 
         cases:
           # ---------------------------------------------------------
-          # CASE: New user or reset - Show Main Menu
+          # CASE: New user - Send Main Menu (state already set in process_incoming)
           # ---------------------------------------------------------
-          NONE_:
+          NONE_NEW_USER:
             - id: send_main_menu
               type: io.kestra.plugin.core.http.Request
               uri: "{{ secret('EVOLUTION_API_URL') }}/message/sendText/{{ vars.INSTANCE_NAME }}"
@@ -212,42 +237,6 @@ tasks:
                   "delay": 1200,
                   "text": "Olá, {{ outputs.process_incoming.vars.push_name }}! 👋\n\nSeja bem vindo ao PedalandoAli! 🚴‍♂️\n\nSomos especialistas em encontrar as melhores ofertas para você.\n\n🎯 *Acesse nossos Grupos de Promoções*\n   Responda *1* para receber os links\n\n💬 *Precisa de Ajuda?*\n   Digite sua dúvida que um atendente irá responder"
                 }
-            - id: set_state_main_menu
-              type: io.kestra.plugin.scripts.python.Script
-              containerImage: python:3.11-slim
-              beforeCommands:
-                - pip install redis
-              env:
-                REDIS_HOST: "{{ secret('REDIS_HOST') }}"
-                REDIS_PORT: "{{ secret('REDIS_PORT') }}"
-                REDIS_PASSWORD: "{{ secret('REDIS_PASSWORD') }}"
-                STATE_TTL: "{{ vars.STATE_TTL_SECONDS }}"
-              script: |
-                import redis
-                import json
-                import os
-
-                sender_phone = "{{ outputs.process_incoming.vars.sender_phone }}"
-                push_name = "{{ outputs.process_incoming.vars.push_name }}"
-
-                r = redis.Redis(
-                    host=os.environ['REDIS_HOST'],
-                    port=int(os.environ['REDIS_PORT']),
-                    password=os.environ['REDIS_PASSWORD'],
-                    decode_responses=True
-                )
-
-                state = {
-                    'current_menu': 'MAIN_MENU',
-                    'push_name': push_name,
-                    'last_interaction': "{{ outputs.process_incoming.vars.timestamp }}"
-                }
-
-                r.setex(
-                    f"cs:state:{sender_phone}",
-                    int(os.environ['STATE_TTL']),
-                    json.dumps(state)
-                )
 
           # ---------------------------------------------------------
           # CASE: User message goes to attendant (silent handoff)
